@@ -31,26 +31,33 @@
 | **网络接入**（本地） | 隧道提供商自己的 CLI | Tailscale / Cloudflare Tunnel / frp / 局域网——与本项目解耦，标准是"能加密转发到 127.0.0.1:port" |
 | **日常调整**（远程） | Web ⚙️ 设置页 | API Key、网关地址、模型目录、白名单增删、严格审批开关、审批超时、并发数、自动放行工具、中转站、改密码 |
 
-## 快速开始
+## 快速开始（一键安装）
 
-前置：**Node.js ≥ 22**，以及一台已装好 [Claude Code](https://code.claude.com/docs) 并配置了模型端点的 PC（本应用复用 CC 的配置，不管理你的模型订阅）。
+前置只有一个：**Node.js ≥ 22**。
+**无需单独安装 Claude Code** —— Agent SDK 自带完整 CLI 运行时（npm install 时按平台自动下载，约 200MB）；模型网关（官方 Anthropic 或任意 Anthropic 兼容端点）在向导里配置。
 
 ```bash
 git clone <this-repo> && cd cc-remote
 
-cd server
-npm install
-npm run setup        # 交互设置密码 + 工作目录白名单（生成 config.json，密码只存哈希）
-npx tsc              # 构建
-npm run start
-
-cd ../web
-npm install
-npm run build        # 产物由服务端同源托管
+# Windows
+powershell -ExecutionPolicy Bypass -File install.ps1
+# Linux / macOS
+bash install.sh
 ```
 
-本机浏览器打开 `http://127.0.0.1:8787` → 登录 → 发第一个任务。
-远程访问（手机）配置、开机自启（Windows/Linux/macOS）、升级备份：**[deploy/DEPLOY.md](deploy/DEPLOY.md)**。
+向导依次引导：装依赖并构建 → 设置登录密码 → 工作目录白名单 → 端口 → 文件中转站（可选）→ **模型网关（Base URL / API Key / 模型目录，写入 `~/.claude/settings.json`）** → 可选开机自启 → 可选立即启动。
+
+完成后本机浏览器打开 `http://127.0.0.1:8787` → 登录 → 发第一个任务。
+远程访问（手机）配置、4 种隧道方案、三平台开机自启、升级备份：**[deploy/DEPLOY.md](deploy/DEPLOY.md)**。
+
+<details>
+<summary>手动安装（不用脚本）</summary>
+
+```bash
+cd server && npm install && npx tsc && npm run setup && npm run start
+cd ../web && npm install && npm run build   # 产物由服务端同源托管
+```
+</details>
 
 冒烟测试：
 

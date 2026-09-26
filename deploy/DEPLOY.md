@@ -41,19 +41,34 @@
 
 ## 3. 首次部署
 
-前置：Node.js ≥ 22；已安装并配置好 Claude Code CLI（`claude` 可用，模型端点在 `~/.claude/settings.json` 或环境变量中配置——本应用不管理你的模型订阅，只是复用 CC 的配置）。
+前置只有一个：**Node.js ≥ 22**。
+**无需单独安装 Claude Code**：`@anthropic-ai/claude-agent-sdk` 通过平台可选依赖自带完整 CLI 运行时
+（win32/linux/darwin × x64/arm64，约 200MB，`npm install` 自动选择下载）。
+模型端点（官方 Anthropic 或任意 Anthropic 兼容网关）在 setup 向导或 Web 设置页配置，写入 `~/.claude/settings.json`。
+
+### 一键安装（推荐）
 
 ```bash
 git clone <this-repo> && cd cc-remote
 
-# 服务端
+# Windows
+powershell -ExecutionPolicy Bypass -File install.ps1
+# Linux / macOS
+bash install.sh
+```
+
+脚本流程：检查 Node → 安装依赖并构建两端 → 运行配置向导（密码/目录/端口/中转站/模型网关）→
+可选开机自启（Windows Startup / Linux systemd）→ 可选立即启动 → 打印隧道配置指引。
+
+### 手动安装
+
+```bash
 cd server
 npm install
-npm run setup          # 交互设置密码 + 目录白名单，生成 config.json
+npm run setup          # 交互向导；参数化: npm run setup -- --dir "标签=路径" [--port 8787] [--force]
 npx tsc                # 构建到 dist/
 npm run start          # 或 npm run dev（开发模式）
 
-# 前端
 cd ../web
 npm install
 npm run build          # 产物 web/dist 由服务端自动托管（同源）
