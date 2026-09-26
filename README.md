@@ -50,6 +50,9 @@ bash install.sh
 完成后本机浏览器打开 `http://127.0.0.1:8787` → 登录 → 发第一个任务。
 远程访问（手机）配置、4 种隧道方案、三平台开机自启、升级备份：**[deploy/DEPLOY.md](deploy/DEPLOY.md)**。
 
+**日常启动**：Windows 双击 `start.bat`，Linux/macOS 执行 `bash start.sh`。
+两个脚本同样开箱即用：首次运行会自动装依赖、构建、进入配置向导；之后直接启动，并自带"已在运行"检测（不会起双实例）。
+
 <details>
 <summary>手动安装（不用脚本）</summary>
 
@@ -77,13 +80,6 @@ cd web && npm run dev         # 前端 Vite dev server（手机同 WiFi 可访�
 
 技术栈：Node 22 + TypeScript + Express + ws + `@anthropic-ai/claude-agent-sdk`（锁版本）｜React 19 + Vite + Tailwind 4 PWA。
 配置热加载：`config.json` 变更即时生效；密码变更自动作废所有登录令牌。
-
-## 路线图 / 已知限制
-
-- [ ] 英文界面 / i18n
-- [ ] 转录内附件（图片）预览
-- [ ] 审批"总是允许"目前仅会话级（CC session 范围）
-- 斜杠命令中终端绑定类命令（如 `/exit`）已按 SDK 建议从手机面板隐藏
 
 ## License
 
