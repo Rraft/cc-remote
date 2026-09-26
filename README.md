@@ -33,11 +33,11 @@
 
 ## 快速开始（一键安装）
 
-前置只有一个：**Node.js ≥ 22**。
+前置：**Node.js ≥ 22**。
 **无需单独安装 Claude Code** —— Agent SDK 自带完整 CLI 运行时（npm install 时按平台自动下载，约 200MB）；模型网关（官方 Anthropic 或任意 Anthropic 兼容端点）在向导里配置。
 
 ```bash
-git clone <this-repo> && cd cc-remote
+git clone https://github.com/Rraft/cc-remote.git && cd cc-remote
 
 # Windows
 powershell -ExecutionPolicy Bypass -File install.ps1
