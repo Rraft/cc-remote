@@ -6,14 +6,19 @@ import ModeToggle from '../components/ModeToggle';
 import { buildItems, type Item } from '../lib/derive';
 import { fmtCost, fmtDuration } from '../lib/format';
 import type { PermissionModeChoice, ServerEvent, TaskStatus } from '../lib/protocol';
-import { loadPermMode, savePermMode } from '../lib/prefs';
+import { loadLastDirId, loadPermMode, saveLastDirId, savePermMode } from '../lib/prefs';
 import { useStore } from '../store';
+import DirBrowser from './DirBrowser';
 
 /**
  * 聊天视图 = CC 转录回放（历史）+ 实时任务事件流（现在）。
  * 会话身份以 CC 的 session_id 为准：追问一律 resume 最新 ccSessionId，
  * 新会话在收到 task_init 后自动获得真实 session_id。
  * 历史分页：首屏最近一页立即渲染；后台静默补全 + 上滑到顶按需加载（带动画）。
+ *
+ * 「新任务」直接以新会话模式进入本视图（无 sessionId / convId）：
+ * 首屏是开始页（选工作目录），第一条消息在下方输入框发送——
+ * 因此首条消息同样支持 "/" 唤起技能、切换模型（与 AI 桌面应用一致）。
  */
 export type ChatSessionKey = {
   /** CC session_id（从历史列表进入） */
@@ -53,6 +58,11 @@ export default function Chat({ session, onBack }: { session: ChatSessionKey; onB
     setMode(m);
     savePermMode(m);
   }
+
+  // 新会话模式：从「新任务」直接进入，尚无历史与任务，第一条消息即创建任务
+  const isNewChat = !session.sessionId && !session.convId;
+  const [newDirId, setNewDirId] = useState<string | undefined>(session.dirId);
+  const [dirBrowseOpen, setDirBrowseOpen] = useState(false);
 
   // 分页游标（before = 全量事件下标）、prepend 滚动补偿、后台加载状态
   const pageRef = useRef({ from: 0, hasMore: false });
@@ -163,8 +173,16 @@ export default function Chat({ session, onBack }: { session: ChatSessionKey; onB
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTaskIds, liveCount, session.sessionId]);
 
-  const dirs = config?.directories ?? [];
+  const dirs = useMemo(() => config?.directories ?? [], [config]);
+  // 新会话未指定目录时给默认值：上次使用 → 白名单第一个
+  useEffect(() => {
+    if (!isNewChat || newDirId || !dirs.length) return;
+    const last = loadLastDirId();
+    setNewDirId(last && dirs.some((d) => d.id === last) ? last : dirs[0]!.id);
+  }, [isNewChat, newDirId, dirs]);
+
   const matchedDir = useMemo(() => {
+    if (isNewChat) return dirs.find((d) => d.id === newDirId);
     if (session.dirId) return dirs.find((d) => d.id === session.dirId);
     if (tCwd) return dirs.find((d) => d.path.toLowerCase() === tCwd.toLowerCase());
     for (const tid of myTaskIds) {
@@ -173,7 +191,10 @@ export default function Chat({ session, onBack }: { session: ChatSessionKey; onB
     }
     return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirs, tCwd, session.dirId, myTaskIds.length]);
+  }, [dirs, tCwd, session.dirId, myTaskIds.length, isNewChat, newDirId]);
+
+  // 新会话开始页：还没发出第一条消息时展示（选目录 + 引导）
+  const showStart = isNewChat && myTaskIds.length === 0;
 
   const runningTask = myTaskIds.map((id) => taskMeta[id]).find((m) => m?.status === 'running');
   const title =
@@ -239,6 +260,7 @@ export default function Chat({ session, onBack }: { session: ChatSessionKey; onB
     }
     if (!dirId) throw new Error('无法确定工作目录（该会话缺少目录信息）');
     const r = await createTask(p, dirId, undefined, liveCcId, mode);
+    saveLastDirId(dirId);
     setLaunchedIds((prev) => [...prev, r.taskId]);
   }
 
@@ -293,20 +315,71 @@ export default function Chat({ session, onBack }: { session: ChatSessionKey; onB
             ↑ 显示更早的消息（还有 {hiddenCount} 条）
           </button>
         )}
+        {showStart && (
+          <div className="py-10 px-1 space-y-6">
+            <div className="text-center">
+              <div className="text-4xl mb-3">✨</div>
+              <h2 className="font-semibold">新会话</h2>
+              <p className="text-xs text-zinc-500 mt-1.5">
+                在下方发送第一条消息开始 · 输入{' '}
+                <span className="font-mono text-emerald-400">/</span> 调用技能或切换模型
+              </p>
+            </div>
+            <div>
+              <div className="text-xs text-zinc-500 mb-1.5">工作目录（白名单）</div>
+              <div className="flex flex-wrap gap-1.5">
+                {dirs.map((d) => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => setNewDirId(d.id)}
+                    className={`rounded-lg px-2.5 py-1.5 text-xs border ${
+                      newDirId === d.id
+                        ? 'border-emerald-600 bg-emerald-950/60 text-emerald-300'
+                        : 'border-zinc-700 bg-zinc-800/60 text-zinc-400'
+                    }`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setDirBrowseOpen(true)}
+                  className="rounded-lg px-2.5 py-1.5 text-xs border border-dashed border-zinc-600 text-zinc-400"
+                >
+                  ＋ 浏览目录
+                </button>
+              </div>
+              {dirs.length === 0 && (
+                <div className="mt-1.5 text-[11px] text-amber-400/80">
+                  还没有可用的工作目录，先点「浏览目录」固定一个
+                </div>
+              )}
+            </div>
+            <p className="text-center text-[11px] text-zinc-600">
+              {mode === 'auto' ? '⚡ 安全操作自动放行，高危才请你批准' : '🛡 每个敏感操作都需你批准'}{' '}
+              · 审批超时自动拒绝
+            </p>
+          </div>
+        )}
         {historyItems
           ?.slice(hiddenCount)
           .map((item, i) => <ItemView key={`h${hiddenCount + i}`} item={item} />)}
         {myTaskIds.map((tid) => (
           <TaskView key={tid} taskId={tid} />
         ))}
-        {historyItems?.length === 0 && myTaskIds.length === 0 && (
+        {!isNewChat && historyItems?.length === 0 && myTaskIds.length === 0 && (
           <div className="py-16 text-center text-sm text-zinc-600">发送第一条指令开始</div>
         )}
       </div>
 
+      {dirBrowseOpen && <DirBrowser onClose={() => setDirBrowseOpen(false)} />}
+
       <FollowUpBar
         disabled={!matchedDir && !tCwd}
         hint={runningTask ? '任务执行中，新消息将排队自动执行' : undefined}
+        placeholder={showStart ? '描述要交给 agent 的任务，/ 唤起技能或切换模型…' : undefined}
+        autoFocus={showStart}
         mode={mode}
         onModeChange={changeMode}
         onSend={sendFollowUp}
@@ -410,12 +483,18 @@ function DoneChip({ item }: { item: Extract<Item, { kind: 'done' }> }) {
 function FollowUpBar({
   disabled,
   hint,
+  placeholder,
+  autoFocus,
   mode,
   onModeChange,
   onSend,
 }: {
   disabled: boolean;
   hint?: string;
+  /** 覆盖默认占位文案（新会话开始页用） */
+  placeholder?: string;
+  /** 挂载时自动聚焦弹出键盘（新会话用） */
+  autoFocus?: boolean;
   mode: PermissionModeChoice;
   onModeChange: (m: PermissionModeChoice) => void;
   onSend: (prompt: string) => Promise<void>;
@@ -513,8 +592,11 @@ function FollowUpBar({
           onKeyDown={(e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') void onSubmit(e);
           }}
-          placeholder={disabled ? '无法确定工作目录' : '继续追问或发新指令，/ 唤起命令…'}
+          placeholder={
+            disabled ? '无法确定工作目录' : (placeholder ?? '继续追问或发新指令，/ 唤起命令…')
+          }
           rows={1}
+          autoFocus={autoFocus}
           disabled={disabled}
           className="flex-1 rounded-2xl border border-zinc-700 bg-zinc-900 px-3.5 py-2.5 text-sm outline-none focus:border-emerald-600 resize-none disabled:opacity-50 max-h-[140px]"
         />

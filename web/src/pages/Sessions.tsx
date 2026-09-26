@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { api, type CcSession } from '../lib/api';
 import { relTime } from '../lib/format';
 import { StatusDot } from '../components';
-import ModeToggle from '../components/ModeToggle';
 import DirBrowser from './DirBrowser';
 import type { ChatSessionKey } from './Chat';
-import type { PermissionModeChoice } from '../lib/protocol';
-import { loadPermMode, savePermMode } from '../lib/prefs';
 import { useStore } from '../store';
 
 /**
@@ -17,7 +14,6 @@ export default function Sessions({ onOpen }: { onOpen: (s: ChatSessionKey) => vo
   const store = useStore();
   const { runningTasks, logout, config } = store;
   const pinned = config?.directories ?? [];
-  const [sheetOpen, setSheetOpen] = useState(false);
   const [dirOpen, setDirOpen] = useState(false);
   const [dirFilter, setDirFilter] = useState('');
   const [sessions, setSessions] = useState<CcSession[] | null>(null);
@@ -61,7 +57,7 @@ export default function Sessions({ onOpen }: { onOpen: (s: ChatSessionKey) => vo
             目录
           </button>
           <button
-            onClick={() => setSheetOpen(true)}
+            onClick={() => onOpen({ dirId: dirFilter || undefined })}
             className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold active:bg-emerald-500"
           >
             ＋ 新任务
@@ -144,14 +140,6 @@ export default function Sessions({ onOpen }: { onOpen: (s: ChatSessionKey) => vo
           ))}
         </section>
       </div>
-
-      {sheetOpen && (
-        <NewTaskSheet
-          onClose={() => setSheetOpen(false)}
-          onOpen={onOpen}
-          onBrowseDirs={() => setDirOpen(true)}
-        />
-      )}
 
       {actionFor && (
         <Sheet onClose={() => setActionFor(null)}>
@@ -333,116 +321,5 @@ function Chip({ active, onClick, label }: { active: boolean; onClick: () => void
     >
       {label}
     </button>
-  );
-}
-
-function NewTaskSheet({
-  onClose,
-  onOpen,
-  onBrowseDirs,
-}: {
-  onClose: () => void;
-  onOpen: (s: ChatSessionKey) => void;
-  onBrowseDirs: () => void;
-}) {
-  const { config, createTask } = useStore();
-  const dirs = config?.directories ?? [];
-  const [dirId, setDirId] = useState(dirs[0]?.id ?? '');
-  const [prompt, setPrompt] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [mode, setMode] = useState<PermissionModeChoice>(() => loadPermMode());
-  const busyRef = useRef(false); // 同步防重，拦截快速双击
-
-  function changeMode(m: PermissionModeChoice) {
-    setMode(m);
-    savePermMode(m);
-  }
-
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (busyRef.current || !prompt.trim() || !dirId) return;
-    busyRef.current = true;
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await createTask(prompt, dirId, undefined, undefined, mode);
-      const p = prompt.trim();
-      onClose();
-      onOpen({ convId: r.convId, title: p.slice(0, 60), dirId });
-    } catch (ex) {
-      setErr(ex instanceof Error ? ex.message : String(ex));
-      setBusy(false);
-    } finally {
-      busyRef.current = false;
-    }
-  }
-
-  return (
-    <div className="absolute inset-0 z-40 flex flex-col justify-end bg-black/60" onClick={onClose}>
-      <form
-        onSubmit={onSubmit}
-        onClick={(e) => e.stopPropagation()}
-        className="rounded-t-2xl border-t border-zinc-800 bg-zinc-900 p-4 safe-bottom"
-      >
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="font-semibold">新任务</h3>
-          <button type="button" onClick={onClose} className="text-zinc-500 text-sm px-2">
-            取消
-          </button>
-        </div>
-        <div className="mb-3">
-          <div className="text-xs text-zinc-500 mb-1.5">工作目录（白名单）</div>
-          <div className="flex flex-wrap gap-1.5">
-            {dirs.map((d) => (
-              <button
-                key={d.id}
-                type="button"
-                onClick={() => setDirId(d.id)}
-                className={`rounded-lg px-2.5 py-1.5 text-xs border ${
-                  dirId === d.id
-                    ? 'border-emerald-600 bg-emerald-950/60 text-emerald-300'
-                    : 'border-zinc-700 bg-zinc-800/60 text-zinc-400'
-                }`}
-              >
-                {d.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={onBrowseDirs}
-              className="rounded-lg px-2.5 py-1.5 text-xs border border-dashed border-zinc-600 text-zinc-400"
-            >
-              ＋ 浏览目录
-            </button>
-          </div>
-        </div>
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder="要交给 agent 的任务…（如：修复登录页的样式问题并跑一遍测试）"
-          rows={4}
-          autoFocus
-          className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm outline-none focus:border-emerald-600 resize-none"
-        />
-        <div className="mt-2.5 flex items-center justify-between gap-2">
-          <span className="text-[11px] text-zinc-500">
-            {mode === 'auto' ? '⚡ 安全操作自动放行，高危才请你批准' : '🛡 每个敏感操作都需你批准'}
-          </span>
-          <ModeToggle value={mode} onChange={changeMode} />
-        </div>
-        {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
-        <button
-          type="submit"
-          disabled={busy || !prompt.trim() || !dirId}
-          className="mt-3 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold active:bg-emerald-500 disabled:opacity-40"
-        >
-          {busy ? '发送中…' : '发送任务'}
-        </button>
-        <p className="mt-2 text-center text-[11px] text-zinc-600">
-          敏感操作会推送到这里等你审批，超时自动拒绝
-        </p>
-      </form>
-    </div>
   );
 }
