@@ -1,4 +1,4 @@
-# CC Remote one-shot installer (Windows)
+﻿# CC Remote one-shot installer (Windows)
 # 用法: powershell -ExecutionPolicy Bypass -File install.ps1
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
