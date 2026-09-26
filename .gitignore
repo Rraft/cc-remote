@@ -12,3 +12,7 @@ docs/research.md
 
 # 前端构建产物
 web/dist/
+
+# IDE 元数据
+.idea/
+.vscode/

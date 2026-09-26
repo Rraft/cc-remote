@@ -58,6 +58,8 @@ git clone https://github.com/Rraft/cc-remote.git && cd cc-remote
 | **[2] 启动运行** | 首次运行自动装依赖/构建/跑向导；自带"已在运行"检测，不会起双实例 | `start.bat` / `start.sh` |
 | **[3] 重置配置** | 停服务 → 备份并删除 config.json（可选清空 data/）→ 重跑配置向导 | `reset.ps1` / `reset.sh` |
 | **[4] 卸载** | 停服务、删开机自启、关 tailscale serve 转发、可选删配置与数据（项目目录提示手动删除） | `uninstall.ps1` / `uninstall.sh` |
+| **[5] 更新升级** | `git pull --ff-only` → 双端装依赖+重建 → 询问后自动重启 | `update.ps1` / `update.sh` |
+| **[6] 重启服务** | 停止旧实例 → 静默拉起（systemd / Startup vbs / nohup 自动选择）→ 健康检查 | `restart.ps1` / `restart.sh` |
 
 <details>
 <summary>手动安装（不用脚本）</summary>
