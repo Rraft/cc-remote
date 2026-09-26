@@ -1,0 +1,22 @@
+# CC Remote systemd unit（Linux 开机自启模板）
+# 用法：替换 __SERVER_DIR__、__NODE__、__USER__ 后：
+#   sudo cp cc-remote.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cc-remote
+[Unit]
+Description=CC Remote - drive Claude Code from your phone
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__SERVER_DIR__
+ExecStart=__NODE__ __SERVER_DIR__/dist/index.js
+Restart=on-failure
+RestartSec=5
+# 日志走 journald: journalctl -u cc-remote -f
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

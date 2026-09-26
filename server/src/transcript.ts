@@ -1,0 +1,260 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { getSessionInfo, listSessions } from '@anthropic-ai/claude-agent-sdk';
+import type { AssistantBlock, ServerEvent } from './protocol.js';
+
+/**
+ * CC 原生会话转录读取（~/.claude/projects/<slug>/<sessionId>.jsonl），
+ * 归一化为与实时流相同的 ServerEvent 序列 —— 前端用同一套渲染逻辑
+ * 展示「历史记录 + 实时任务」，会话身份完全以 CC 的 session_id 为准。
+ *
+ * 性能设计：
+ * - 服务端按会话缓存解析结果（LRU），文件 mtime/size 变化时自动失效重解析
+ * - 分页返回（limit/before 游标 = 事件数组下标），前端先取最近一页立即渲染，
+ *   再后台逐页补全；服务端启动时对最近会话做 warm-up 预热缓存
+ */
+
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const TOOL_RESULT_MAX = 4000;
+/** 单会话缓存的事件上限（超出丢弃最旧部分并加提示） */
+const EVENT_CAP = 20000;
+/** LRU 缓存的会话数上限 */
+const CACHE_MAX = 40;
+
+export type TranscriptPage = {
+  sessionId: string;
+  title?: string;
+  cwd?: string;
+  events: ServerEvent[];
+  /** 全量事件数 */
+  total: number;
+  /** 本页首个事件在全量数组中的下标 */
+  from: number;
+  /** 前面还有更旧的历史 */
+  hasMore: boolean;
+};
+
+type CachedTranscript = {
+  file: string;
+  mtimeMs: number;
+  size: number;
+  events: ServerEvent[];
+  title?: string;
+  cwd?: string;
+};
+
+const cache = new Map<string, CachedTranscript>();
+
+function touchCache(sessionId: string, entry: CachedTranscript): void {
+  cache.delete(sessionId);
+  cache.set(sessionId, entry);
+  while (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
+function findTranscriptFile(sessionId: string): string | null {
+  const root = path.join(os.homedir(), '.claude', 'projects');
+  if (!fs.existsSync(root)) return null;
+  for (const ent of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!ent.isDirectory()) continue;
+    const candidate = path.join(root, ent.name, `${sessionId}.jsonl`);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/** 解析转录文件为归一化事件序列 */
+function parseTranscript(file: string, sessionId: string): ServerEvent[] {
+  const events: ServerEvent[] = [];
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    let e: Record<string, unknown>;
+    try {
+      e = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (e.isSidechain === true || e.isMeta === true) continue; // 子代理内部消息 / 元数据
+    const tsRaw = typeof e.timestamp === 'string' ? Date.parse(e.timestamp) : NaN;
+    const at = Number.isFinite(tsRaw) ? tsRaw : Date.now();
+    const message = e.message as { role?: string; content?: unknown } | undefined;
+
+    if (e.type === 'user' && message?.role === 'user') {
+      const c = message.content;
+      if (typeof c === 'string') {
+        const t = c.trim();
+        if (
+          !t ||
+          t.startsWith('<command-name>') ||
+          t.startsWith('<command-message>') ||
+          t.startsWith('Caveat:') ||
+          t.startsWith('<local-command')
+        ) {
+          continue; // 斜杠命令/系统注入文本，不算用户消息
+        }
+        events.push({
+          type: 'task_started',
+          taskId: sessionId,
+          convId: '',
+          dirId: '',
+          dirLabel: '',
+          prompt: t,
+          at,
+        });
+      } else if (Array.isArray(c)) {
+        for (const b of c as Array<Record<string, unknown>>) {
+          if (b?.type === 'tool_result') {
+            events.push({
+              type: 'tool_result',
+              taskId: sessionId,
+              toolUseId: String(b.tool_use_id ?? ''),
+              text: truncate(stringifyContent(b.content), TOOL_RESULT_MAX),
+              isError: b.is_error === true,
+            });
+          }
+        }
+      }
+    } else if (e.type === 'assistant' && message?.role === 'assistant') {
+      const content = message.content;
+      if (!Array.isArray(content)) continue;
+      const blocks: AssistantBlock[] = [];
+      for (const b of content as Array<Record<string, unknown>>) {
+        if (b.type === 'text' && typeof b.text === 'string' && b.text) {
+          blocks.push({ type: 'text', text: b.text });
+        } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking) {
+          blocks.push({ type: 'thinking', thinking: b.thinking });
+        } else if (b.type === 'tool_use' && b.id && b.name) {
+          blocks.push({
+            type: 'tool_use',
+            id: String(b.id),
+            name: String(b.name),
+            input: b.input,
+          });
+        }
+      }
+      if (blocks.length) events.push({ type: 'agent_message', taskId: sessionId, blocks });
+    }
+  }
+  if (events.length > EVENT_CAP) {
+    const kept = events.slice(-EVENT_CAP);
+    kept.unshift({
+      type: 'task_started',
+      taskId: sessionId,
+      convId: '',
+      dirId: '',
+      dirLabel: '',
+      prompt: `（历史过长，更早的 ${events.length - EVENT_CAP} 条事件已省略）`,
+      at: 0,
+    });
+    return kept;
+  }
+  return events;
+}
+
+/** 取得（或解析并缓存）会话全量事件 */
+async function loadCached(sessionId: string): Promise<CachedTranscript> {
+  const hit = cache.get(sessionId);
+  const file = hit?.file ?? findTranscriptFile(sessionId);
+  if (!file) throw new Error(`会话转录不存在: ${sessionId}`);
+  const st = fs.statSync(file);
+
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+    touchCache(sessionId, hit);
+    return hit;
+  }
+
+  const events = parseTranscript(file, sessionId);
+  let title: string | undefined;
+  let cwd: string | undefined;
+  try {
+    const info = await getSessionInfo(sessionId);
+    if (info) {
+      title = info.customTitle || info.summary || info.firstPrompt || undefined;
+      cwd = info.cwd;
+    }
+  } catch {
+    /* info 缺失不影响转录读取 */
+  }
+  const entry: CachedTranscript = { file, mtimeMs: st.mtimeMs, size: st.size, events, title, cwd };
+  touchCache(sessionId, entry);
+  return entry;
+}
+
+/** 分页读取转录：默认返回最近 limit 条；before = 全量数组下标游标 */
+export async function getTranscript(
+  sessionId: string,
+  opts: { limit?: number; before?: number } = {},
+): Promise<TranscriptPage> {
+  if (!UUID_RE.test(sessionId)) throw new Error('非法 sessionId');
+  const entry = await loadCached(sessionId);
+  const total = entry.events.length;
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 1000);
+  const end = Math.min(Math.max(opts.before ?? total, 0), total);
+  const start = Math.max(0, end - limit);
+  return {
+    sessionId,
+    title: entry.title,
+    cwd: entry.cwd,
+    events: entry.events.slice(start, end),
+    total,
+    from: start,
+    hasMore: start > 0,
+  };
+}
+
+/**
+ * 服务启动预热：解析最近 n 个会话进缓存（后台执行、逐个容错），
+ * 让手机端点开历史会话时首屏就是缓存命中。
+ */
+export async function warmTranscripts(n = 20): Promise<number> {
+  const startedAt = Date.now();
+  let warmed = 0;
+  try {
+    const infos = await listSessions({ limit: n });
+    for (const info of infos) {
+      try {
+        await loadCached(info.sessionId);
+        warmed++;
+      } catch {
+        /* 单个会话失败跳过 */
+      }
+    }
+  } catch {
+    /* listSessions 失败则跳过预热 */
+  }
+  if (warmed > 0) {
+    console.log(`[cc-remote] 转录缓存预热完成: ${warmed} 个会话, ${Date.now() - startedAt}ms`);
+  }
+  return warmed;
+}
+
+// ---------- 工具函数 ----------
+
+function stringifyContent(c: unknown): string {
+  if (c == null) return '';
+  if (typeof c === 'string') return c;
+  if (Array.isArray(c)) {
+    return c
+      .map((x) => {
+        if (typeof x === 'string') return x;
+        if (x && typeof x === 'object' && 'text' in x && typeof (x as { text?: unknown }).text === 'string') {
+          return (x as { text: string }).text;
+        }
+        return JSON.stringify(x);
+      })
+      .join('\n');
+  }
+  try {
+    return JSON.stringify(c);
+  } catch {
+    return String(c);
+  }
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n) + `\n…（已截断，原长 ${s.length} 字符）` : s;
+}

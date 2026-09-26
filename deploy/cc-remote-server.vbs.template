@@ -1,0 +1,17 @@
+' CC Remote auto-start at user logon (silent, no window)
+' 用法：把 __SERVER_DIR__ 替换为 server 目录绝对路径，
+' 然后将本文件复制到:
+'   %AppData%\Microsoft\Windows\Start Menu\Programs\Startup\cc-remote-server.vbs
+' 日志追加到 <server>\data\server.log；服务已在运行则自动跳过（防双实例）。
+On Error Resume Next
+Set http = CreateObject("MSXML2.XMLHTTP")
+http.Open "GET", "http://127.0.0.1:8787/api/healthz", False
+http.Send
+If Err.Number = 0 Then
+    If http.Status = 200 Then WScript.Quit
+End If
+Err.Clear
+On Error GoTo 0
+Set sh = CreateObject("WScript.Shell")
+sh.CurrentDirectory = "__SERVER_DIR__"
+sh.Run "cmd /c npm run start >> data\server.log 2>&1", 0, False

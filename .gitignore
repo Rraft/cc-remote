@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+
+# 运行时敏感配置与数据（密码哈希、会话、审计日志）
+server/config.json
+server/data/
+
+# 内部开发日志（含部署者环境细节，不随仓库发布）
+docs/plan.md
+docs/research.md
+
+# 前端构建产物
+web/dist/

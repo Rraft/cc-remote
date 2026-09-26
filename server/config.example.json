@@ -1,0 +1,19 @@
+{
+  "host": "127.0.0.1",
+  "port": 8787,
+  "password": null,
+  "directories": [
+    { "id": "my-project", "label": "我的项目", "path": "C:\\path\\to\\your\\project" }
+  ],
+  "autoAllowTools": ["Read", "Grep", "Glob"],
+  "strictApproval": true,
+  "approvalTimeoutMs": 120000,
+  "maxTurns": 60,
+  "maxConcurrentTasks": 2,
+  "dataDir": "./data",
+  "eventBufferCap": 800,
+  "fileDrop": {
+    "root": "C:\\Users\\me\\iCloudDrive\\cc-remote",
+    "addToAgentScope": true
+  }
+}

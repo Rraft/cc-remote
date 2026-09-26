@@ -1,0 +1,17 @@
+{
+  "name": "CC Remote",
+  "short_name": "CC Remote",
+  "description": "远程控制 PC 上的 Claude Code",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    }
+  ]
+}

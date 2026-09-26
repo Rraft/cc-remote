@@ -1,0 +1,66 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-100 antialiased;
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* markdown 渲染样式（react-markdown 输出的原生标签） */
+.md {
+  @apply text-[15px] leading-relaxed break-words;
+}
+.md p {
+  @apply my-1.5;
+}
+.md pre {
+  @apply my-2 rounded-lg bg-zinc-900 border border-zinc-800 p-3 overflow-x-auto text-[13px];
+}
+.md code {
+  @apply font-mono text-emerald-300;
+}
+.md pre code {
+  @apply text-zinc-200;
+}
+.md ul {
+  @apply list-disc pl-5 my-1.5;
+}
+.md ol {
+  @apply list-decimal pl-5 my-1.5;
+}
+.md h1,
+.md h2,
+.md h3 {
+  @apply font-semibold mt-3 mb-1.5;
+}
+.md blockquote {
+  @apply border-l-2 border-zinc-700 pl-3 text-zinc-400 my-2;
+}
+.md a {
+  @apply text-emerald-400 underline;
+}
+.md table {
+  @apply my-2 border-collapse text-[13px];
+}
+.md th,
+.md td {
+  @apply border border-zinc-700 px-2 py-1;
+}
+
+/* 安全区（iPhone 刘海/底部横条） */
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
