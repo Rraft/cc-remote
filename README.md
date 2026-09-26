@@ -80,8 +80,11 @@ cd web && npm run dev         # 前端 Vite dev server（手机同 WiFi 可访�
 
 ## 路线图 / 已知限制
 
-- [ ] LICENSE 文件（提交开源前选定协议）
 - [ ] 英文界面 / i18n
 - [ ] 转录内附件（图片）预览
 - [ ] 审批"总是允许"目前仅会话级（CC session 范围）
 - 斜杠命令中终端绑定类命令（如 `/exit`）已按 SDK 建议从手机面板隐藏
+
+## License
+
+[MIT](LICENSE)
