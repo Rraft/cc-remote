@@ -64,19 +64,34 @@ if ($answer -notmatch '^[nN]') {
   }
 }
 
-# 7. 远程访问提示
+# 7. 远程访问：检测到 Tailscale 时主动提出配置 serve 转发
 Write-Host ""
-Write-Host "==> 完成!" -ForegroundColor Green
-Write-Host "  本机访问: http://127.0.0.1:8787"
+Write-Host "==> 安装完成!" -ForegroundColor Green
+$cfgPort = 8787
+try { $cfgPort = (Get-Content (Join-Path $root "server\config.json") -Raw | ConvertFrom-Json).port } catch {}
+Write-Host "  本机访问: http://127.0.0.1:$cfgPort"
 $tsExe = $null
 if (Get-Command tailscale -ErrorAction SilentlyContinue) { $tsExe = "tailscale" }
 elseif (Test-Path "C:\Program Files\Tailscale\tailscale.exe") { $tsExe = "C:\Program Files\Tailscale\tailscale.exe" }
 if ($tsExe) {
-  Write-Host "  检测到 Tailscale，手机远程访问步骤:"
-  Write-Host "    1) tailscale up   （登录账号；手机装 Tailscale App 登录同一账号）"
-  Write-Host "    2) 在 https://login.tailscale.com/admin/dns 开启 HTTPS Certificates"
-  Write-Host "    3) tailscale serve --bg 8787"
-  Write-Host "    4) 手机浏览器访问 https://<机器名>.<tailnet>.ts.net"
+  $st = (& $tsExe status 2>&1 | Out-String)
+  if ($st -match 'Logged out|stopped') {
+    Write-Host "  Tailscale 未登录：先运行 tailscale up（手机装 Tailscale App 登录同一账号）"
+  } else {
+    $answer = Read-Host "  检测到 Tailscale 已登录。现在配置 serve 转发（手机即可通过 HTTPS 访问）? (Y/n)"
+    if ($answer -notmatch '^[nN]') {
+      $job = Start-Job -ScriptBlock { param($ts, $p) & $ts serve --bg $p 2>&1 } -ArgumentList $tsExe, $cfgPort
+      if (Wait-Job $job -Timeout 60) { Receive-Job $job | Out-String | Write-Host }
+      else {
+        Stop-Job $job
+        Write-Host "  serve 配置超时：若从未开启过 tailnet HTTPS 证书，请先到" -ForegroundColor Yellow
+        Write-Host "  https://login.tailscale.com/admin/dns 开启 HTTPS Certificates，然后手动执行:" -ForegroundColor Yellow
+        Write-Host "      tailscale serve --bg $cfgPort"
+      }
+      Remove-Job $job -Force -ErrorAction SilentlyContinue
+    }
+  }
+  Write-Host "  手机浏览器访问: https://<机器名>.<tailnet>.ts.net（tailscale status 可查机器名）"
 } else {
   Write-Host "  远程访问: 安装 Tailscale（推荐）或其他隧道，见 deploy\DEPLOY.md"
 }

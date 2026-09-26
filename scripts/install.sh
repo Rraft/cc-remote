@@ -58,10 +58,25 @@ if [ -z "$started" ]; then
 fi
 
 echo ""
-echo "==> 完成!"
-echo "  本机访问: http://127.0.0.1:8787"
+echo "==> 安装完成!"
+cfg_port=$(node -p "require('$root/server/config.json').port" 2>/dev/null || echo 8787)
+echo "  本机访问: http://127.0.0.1:$cfg_port"
 if command -v tailscale >/dev/null 2>&1; then
-  echo "  检测到 Tailscale: tailscale up && tailscale serve --bg 8787 后手机访问 https://<机器名>.<tailnet>.ts.net"
+  if tailscale status 2>&1 | grep -qE 'Logged out|stopped'; then
+    echo "  Tailscale 未登录：先运行 tailscale up（手机装 Tailscale App 登录同一账号）"
+  else
+    read -rp "  检测到 Tailscale 已登录。现在配置 serve 转发（手机即可通过 HTTPS 访问）? (Y/n) " a
+    if [[ ! "$a" =~ ^[nN] ]]; then
+      if timeout 60 tailscale serve --bg "$cfg_port"; then
+        echo "  serve 转发已配置"
+      else
+        echo "  serve 配置失败/超时：若从未开启 tailnet HTTPS 证书，请先到"
+        echo "  https://login.tailscale.com/admin/dns 开启 HTTPS Certificates 后重试:"
+        echo "      tailscale serve --bg $cfg_port"
+      fi
+    fi
+  fi
+  echo "  手机浏览器访问: https://<机器名>.<tailnet>.ts.net（tailscale status 可查机器名）"
 else
   echo "  远程访问: 安装 Tailscale（推荐）或其他隧道，见 deploy/DEPLOY.md"
 fi
