@@ -38,20 +38,26 @@
 
 ```bash
 git clone https://github.com/Rraft/cc-remote.git && cd cc-remote
-
-# Windows
-powershell -ExecutionPolicy Bypass -File install.ps1
-# Linux / macOS
-bash install.sh
 ```
+
+- **Windows**：双击 `cc-remote.bat` → 选 **[1] 首次安装**
+- **Linux / macOS**：`bash cc-remote.sh` → 选 **[1] 首次安装**
 
 向导依次引导：装依赖并构建 → 设置登录密码 → 工作目录白名单 → 端口 → 文件中转站（可选）→ **模型网关（Base URL / API Key / 模型目录，写入 `~/.claude/settings.json`）** → 可选开机自启 → 可选立即启动。
 
 完成后本机浏览器打开 `http://127.0.0.1:8787` → 登录 → 发第一个任务。
 远程访问（手机）配置、4 种隧道方案、三平台开机自启、升级备份：**[deploy/DEPLOY.md](deploy/DEPLOY.md)**。
 
-**日常启动**：Windows 双击 `start.bat`，Linux/macOS 执行 `bash start.sh`。
-两个脚本同样开箱即用：首次运行会自动装依赖、构建、进入配置向导；之后直接启动，并自带"已在运行"检测（不会起双实例）。
+## 管理脚本
+
+统一入口 `cc-remote.bat`（Windows 双击）/ `cc-remote.sh`（Linux/macOS/Git Bash），四个菜单项全部开箱即用：
+
+| 选项 | 作用 | 对应脚本（scripts/） |
+|---|---|---|
+| **[1] 首次安装** | 装依赖 + 构建 + 配置向导 + 可选开机自启 | `install.ps1` / `install.sh` |
+| **[2] 启动运行** | 首次运行自动装依赖/构建/跑向导；自带"已在运行"检测，不会起双实例 | `start.bat` / `start.sh` |
+| **[3] 重置配置** | 停服务 → 备份并删除 config.json（可选清空 data/）→ 重跑配置向导 | `reset.ps1` / `reset.sh` |
+| **[4] 卸载** | 停服务、删开机自启、关 tailscale serve 转发、可选删配置与数据（项目目录提示手动删除） | `uninstall.ps1` / `uninstall.sh` |
 
 <details>
 <summary>手动安装（不用脚本）</summary>

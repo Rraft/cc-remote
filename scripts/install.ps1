@@ -1,7 +1,7 @@
 ﻿# CC Remote one-shot installer (Windows)
-# 用法: powershell -ExecutionPolicy Bypass -File install.ps1
+# 用法: 根目录 cc-remote.bat 选 [1]，或 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = Split-Path -Parent $PSScriptRoot
 
 Write-Host "==> CC Remote 安装向导" -ForegroundColor Cyan
 

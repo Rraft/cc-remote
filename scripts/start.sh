@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# cc-remote 快速启动（Git Bash / Linux / macOS）：bash start.sh
+# cc-remote 快速启动（Git Bash / Linux / macOS）：bash scripts/start.sh
 # 首次运行自动：装依赖 → 构建 → 配置向导；之后直接启动。Ctrl+C 停止。
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/.." || exit 1
 
 if curl -s --max-time 3 http://127.0.0.1:8787/api/healthz >/dev/null 2>&1; then
   echo "✔ 服务已在运行，无需重复启动"

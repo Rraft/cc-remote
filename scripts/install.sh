@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # CC Remote one-shot installer (Linux / macOS)
-# 用法: bash install.sh
+# 用法: 根目录 bash cc-remote.sh 选 [1]，或 bash scripts/install.sh
 set -e
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 root="$(pwd)"
 
 echo "==> CC Remote 安装向导"
@@ -32,6 +32,7 @@ echo "==> 进入配置向导"
 (cd server && npm run setup)
 
 # 5. 开机自启（Linux systemd，可选）
+started=""
 if [ "$(uname)" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then
   read -rp "是否安装 systemd 服务（开机自启，需要 sudo）? (y/N) " a
   if [[ "$a" =~ ^[yY] ]]; then

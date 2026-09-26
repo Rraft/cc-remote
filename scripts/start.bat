@@ -1,8 +1,9 @@
 @echo off
-rem cc-remote quick start (double-click). Close this window to stop the server.
+rem cc-remote quick start (double-click or via cc-remote.bat menu).
+rem Close this window to stop the server.
 rem First run: installs dependencies, builds, and launches the setup wizard automatically.
 title cc-remote server
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 curl -s --max-time 3 http://127.0.0.1:8787/api/healthz >nul 2>&1
 if not errorlevel 1 (

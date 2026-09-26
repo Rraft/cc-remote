@@ -51,14 +51,14 @@
 ```bash
 git clone <this-repo> && cd cc-remote
 
-# Windows
-powershell -ExecutionPolicy Bypass -File install.ps1
-# Linux / macOS
-bash install.sh
+# Windows：双击 cc-remote.bat（或 .\cc-remote.bat）→ 选 [1]
+# Linux / macOS：
+bash cc-remote.sh   # 选 [1]
 ```
 
-脚本流程：检查 Node → 安装依赖并构建两端 → 运行配置向导（密码/目录/端口/中转站/模型网关）→
+流程：检查 Node → 安装依赖并构建两端 → 配置向导（密码/目录/端口/中转站/模型网关）→
 可选开机自启（Windows Startup / Linux systemd）→ 可选立即启动 → 打印隧道配置指引。
+统一入口菜单还包含 **[2] 启动运行、[3] 重置配置、[4] 卸载**（对应 `scripts/` 下同名脚本）。
 
 ### 手动安装
 
@@ -151,8 +151,7 @@ cd ../web && npm install && npm run build
 备份：`server/config.json`（密码哈希+白名单）与 `server/data/`（会话/审计）。
 模型网关配置在 `~/.claude/settings.json`（属于 Claude Code，不在本应用备份范围）。
 
-## 7. 卸载
+## 7. 卸载与重置
 
-1. 删除自启项（Startup vbs / systemd unit）
-2. `tailscale serve --bg 8787 off`（或其他隧道对应操作）
-3. 删除项目目录；`~/.claude/settings.json` 若有改动可自行还原（网关写入时旧文件备份为 `.bak`）
+- **卸载**：运行 `cc-remote.bat` / `cc-remote.sh` 选 **[4]**（停止服务、删除 Startup vbs 或 systemd 服务、关闭 tailscale serve 443 转发、可选删除配置与数据）。项目目录本身请手动删除；`~/.claude/settings.json` 属于 Claude Code，脚本不做改动（网关写入时旧文件备份为 `.bak`）。
+- **仅重置配置**：选 **[3]**——备份并删除 config.json（可选清空 data/），然后重跑配置向导；不影响自启与隧道配置。
