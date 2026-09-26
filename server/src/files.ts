@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { audit } from './audit.js';
 import type { AppConfig } from './config.js';
@@ -31,40 +32,41 @@ export function boxDir(cfg: AppConfig, box: BoxName): string {
   return path.join(root, box);
 }
 
-/** 确保 root/inbox、root/outbox 存在（幂等，启动与配置热加载时调用） */
-export function ensureFileDrop(cfg: AppConfig): void {
+/** 确保 root/inbox、root/outbox 存在（幂等，启动与配置热加载时调用；异步不阻塞） */
+export async function ensureFileDrop(cfg: AppConfig): Promise<void> {
   const root = fileDropRoot(cfg);
   if (!root) return;
   try {
-    fs.mkdirSync(path.join(root, 'inbox'), { recursive: true });
-    fs.mkdirSync(path.join(root, 'outbox'), { recursive: true });
+    await fsp.mkdir(path.join(root, 'inbox'), { recursive: true });
+    await fsp.mkdir(path.join(root, 'outbox'), { recursive: true });
   } catch (err) {
     console.warn('[files] 创建中转站目录失败:', err instanceof Error ? err.message : err);
   }
 }
 
-export function listBox(cfg: AppConfig, box: BoxName): FileEntry[] {
+export async function listBox(cfg: AppConfig, box: BoxName): Promise<FileEntry[]> {
   const dir = boxDir(cfg, box);
-  if (!fs.existsSync(dir)) return [];
+  let entries: fs.Dirent[];
+  try {
+    entries = await fsp.readdir(dir, { withFileTypes: true });
+  } catch {
+    return []; // 目录不存在/不可读
+  }
   const out: FileEntry[] = [];
-  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+  for (const ent of entries) {
     if (!ent.isFile()) continue;
     if (ent.name.startsWith('.') || ent.name.toLowerCase() === 'desktop.ini') continue;
-    let size = 0;
-    let mtime = 0;
     try {
-      const st = fs.statSync(path.join(dir, ent.name));
-      size = st.size;
-      mtime = st.mtimeMs;
+      const st = await fsp.stat(path.join(dir, ent.name));
+      out.push({
+        name: ent.name,
+        size: st.size,
+        mtime: st.mtimeMs,
+        isPlaceholder: ent.name.toLowerCase().endsWith('.icloud'),
+      });
     } catch {
       continue;
     }
-    out.push({
-      name: ent.name,
-      size,
-      mtime,
-      isPlaceholder: ent.name.toLowerCase().endsWith('.icloud'),
-    });
   }
   return out.sort((a, b) => b.mtime - a.mtime);
 }
@@ -82,11 +84,17 @@ export function resolveInBox(cfg: AppConfig, box: BoxName, name: string, allowPl
   return abs;
 }
 
-/** 把项目产物复制进 outbox（源必须在白名单目录或中转站内） */
-export function copyToOutbox(cfg: AppConfig, srcPath: string): FileEntry {
+/** 把项目产物复制进 outbox（源必须在白名单目录或中转站内；异步复制大文件不卡循环） */
+export async function copyToOutbox(cfg: AppConfig, srcPath: string): Promise<FileEntry> {
   if (typeof srcPath !== 'string' || !srcPath.trim()) throw new Error('srcPath 不能为空');
   const src = path.resolve(srcPath);
-  if (!fs.existsSync(src) || !fs.statSync(src).isFile()) throw new Error(`源文件不存在: ${src}`);
+  let srcStat: fs.Stats;
+  try {
+    srcStat = await fsp.stat(src);
+  } catch {
+    throw new Error(`源文件不存在: ${src}`);
+  }
+  if (!srcStat.isFile()) throw new Error(`源文件不是普通文件: ${src}`);
 
   const root = fileDropRoot(cfg);
   const inWhitelist = cfg.directories.some((d) => isPathInside(src, d.path));
@@ -96,7 +104,7 @@ export function copyToOutbox(cfg: AppConfig, srcPath: string): FileEntry {
   }
 
   const outbox = boxDir(cfg, 'outbox');
-  fs.mkdirSync(outbox, { recursive: true });
+  await fsp.mkdir(outbox, { recursive: true });
   let dest = path.join(outbox, path.basename(src));
   if (fs.existsSync(dest)) {
     const ext = path.extname(dest);
@@ -104,15 +112,18 @@ export function copyToOutbox(cfg: AppConfig, srcPath: string): FileEntry {
     const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
     dest = path.join(outbox, `${base}-${stamp}${ext}`);
   }
-  fs.copyFileSync(src, dest);
-  const st = fs.statSync(dest);
+  await fsp.copyFile(src, dest);
+  const st = await fsp.stat(dest);
   audit('file_send', { src, dest: path.basename(dest), size: st.size });
   return { name: path.basename(dest), size: st.size, mtime: st.mtimeMs, isPlaceholder: false };
 }
 
-export function deleteInBox(cfg: AppConfig, box: BoxName, name: string): void {
+export async function deleteInBox(cfg: AppConfig, box: BoxName, name: string): Promise<void> {
   const abs = resolveInBox(cfg, box, name, true); // 占位文件也允许删除
-  if (!fs.existsSync(abs)) throw new Error('文件不存在');
-  fs.unlinkSync(abs);
+  try {
+    await fsp.unlink(abs);
+  } catch {
+    throw new Error('文件不存在');
+  }
   audit('file_delete', { box, name });
 }

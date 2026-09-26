@@ -1,14 +1,20 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { SessionRecord } from './protocol.js';
 
 /**
  * 会话持久化（data/sessions.json），按逻辑会话 convId 为主键。
  * ccSessionId 记录最新一次 init 报告的 CC 会话 ID，resume 时取它。
+ *
+ * 写入采用「防抖 + 异步串行」：内存缓存同步更新（读永远即时），
+ * 落盘合并到 400ms 后的一次异步写，不阻塞事件循环；进程关停前 flush。
  */
 let file = '';
 let cache: SessionRecord[] = [];
+let saveTimer: NodeJS.Timeout | null = null;
+let saveChain: Promise<void> = Promise.resolve();
 
 export function initSessions(dataDir: string): void {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -24,11 +30,41 @@ export function initSessions(dataDir: string): void {
   }
 }
 
-function save(): void {
-  if (!file) return;
+function doSave(): Promise<void> {
+  if (!file) return Promise.resolve();
+  const snapshot = JSON.stringify(cache, null, 2);
   const tmp = file + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(cache, null, 2));
-  fs.renameSync(tmp, file);
+  return fsp
+    .writeFile(tmp, snapshot)
+    .then(() => fsp.rename(tmp, file))
+    .catch((err) => {
+      console.error('[sessions] 保存失败:', err instanceof Error ? err.message : err);
+    });
+}
+
+function save(): void {
+  if (saveTimer) return; // 400ms 内的多次修改合并为一次写盘
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    saveChain = saveChain.then(doSave);
+  }, 400);
+  saveTimer.unref?.();
+}
+
+/** 关停前立即落盘（同步，确保不丢最近 400ms 的变更） */
+export function flushSessionsSync(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if (!file) return;
+  try {
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(cache, null, 2));
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    console.error('[sessions] 关停落盘失败:', err instanceof Error ? err.message : err);
+  }
 }
 
 export function createConversation(dirId: string, dirLabel: string, title: string): SessionRecord {

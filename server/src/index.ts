@@ -3,7 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
-import { audit, initAudit } from './audit.js';
+import { audit, flushAudit, initAudit } from './audit.js';
 import {
   COOKIE_NAME,
   buildClearCookie,
@@ -27,14 +27,14 @@ import { getCommands, getSkills, initCommands, readSettingsModels } from './comm
 import { getTranscript, warmTranscripts } from './transcript.js';
 import { copyToOutbox, deleteInBox, ensureFileDrop, listBox, resolveInBox } from './files.js';
 import type { ClientMessage, PendingApprovalInfo, ServerEvent } from './protocol.js';
-import { initSessions, listConversations, removeByCcSession } from './sessions.js';
+import { flushSessionsSync, initSessions, listConversations, removeByCcSession } from './sessions.js';
 import { TaskManager } from './task-manager.js';
 
 const cfg = loadConfig();
 initAudit(cfg.dataDir);
 initSessions(cfg.dataDir);
 initCommands(cfg.dataDir);
-ensureFileDrop(cfg);
+void ensureFileDrop(cfg);
 
 const app = express();
 app.disable('x-powered-by');
@@ -446,14 +446,14 @@ app.get('/api/cc-sessions/:id/transcript', requireAuth, async (req, res) => {
 
 // ---------- iCloud 文件中转站 ----------
 
-app.get('/api/files', requireAuth, (req, res) => {
+app.get('/api/files', requireAuth, async (req, res) => {
   const box = req.query.box === 'outbox' ? 'outbox' : 'inbox';
   if (!cfg.fileDrop) {
     res.json({ configured: false, box, files: [] });
     return;
   }
   try {
-    res.json({ configured: true, box, root: cfg.fileDrop.root, files: listBox(cfg, box) });
+    res.json({ configured: true, box, root: cfg.fileDrop.root, files: await listBox(cfg, box) });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -474,21 +474,21 @@ app.get('/api/files/download', requireAuth, (req, res) => {
   }
 });
 
-app.post('/api/files/outbox', requireAuth, (req, res) => {
+app.post('/api/files/outbox', requireAuth, async (req, res) => {
   const srcPath = String((req.body as { srcPath?: unknown } | undefined)?.srcPath ?? '');
   try {
-    const file = copyToOutbox(cfg, srcPath);
+    const file = await copyToOutbox(cfg, srcPath);
     res.json({ ok: true, file });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
-app.delete('/api/files', requireAuth, (req, res) => {
+app.delete('/api/files', requireAuth, async (req, res) => {
   const box = req.query.box === 'outbox' ? 'outbox' : 'inbox';
   const name = String(req.query.name ?? '');
   try {
-    deleteInBox(cfg, box, name);
+    await deleteInBox(cfg, box, name);
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
@@ -608,7 +608,7 @@ server.listen(cfg.port, cfg.host, () => {
           console.log('[cc-remote] 检测到密码已更换，所有登录会话已作废');
         }
         Object.assign(cfg, fresh); // 目录白名单/审批超时等即时生效（新任务用新配置）
-        ensureFileDrop(cfg);
+        void ensureFileDrop(cfg);
         console.log('[cc-remote] config.json 已热加载');
       } catch (err) {
         console.warn(
@@ -637,6 +637,8 @@ server.listen(cfg.port, cfg.host, () => {
 function shutdown(sig: string): void {
   console.log(`[cc-remote] 收到 ${sig}，正在关闭`);
   clearInterval(heartbeat);
+  flushSessionsSync(); // 会话记录立即落盘（防抖窗口内的变更不丢）
+  void flushAudit(500); // 审计队列限时清空
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }

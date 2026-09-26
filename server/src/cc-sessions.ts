@@ -34,8 +34,20 @@ export type CcSessionDTO = {
   remoteConvId?: string;
 };
 
+/** listSessions 会扫描项目目录读元数据，开销不小——加 5s TTL 缓存抗轮询/连点 */
+const LIST_TTL_MS = 5000;
+let listCache: { key: string; at: number; infos: Awaited<ReturnType<typeof listSessions>> } | null =
+  null;
+
 export async function listCcSessions(dirPath?: string, limit = 50): Promise<CcSessionDTO[]> {
-  const infos = await listSessions(dirPath ? { dir: dirPath, limit } : { limit });
+  const key = `${dirPath ?? '*'}:${limit}`;
+  let infos;
+  if (listCache && listCache.key === key && Date.now() - listCache.at < LIST_TTL_MS) {
+    infos = listCache.infos;
+  } else {
+    infos = await listSessions(dirPath ? { dir: dirPath, limit } : { limit });
+    listCache = { key, at: Date.now(), infos };
+  }
   const byCc = new Map<string, string>();
   for (const c of listConversations()) {
     if (c.ccSessionId) byCc.set(c.ccSessionId, c.convId);

@@ -189,6 +189,14 @@ export default function Chat({ session, onBack }: { session: ChatSessionKey; onB
     return buildItems(trimOverlap(transcript, livePrompts));
   }, [transcript, myTaskIds, taskMeta]);
 
+  // 渲染窗口化：长会话只渲染最近 INITIAL_ITEMS 条，向上按需扩展（手机端流畅度关键）
+  const INITIAL_ITEMS = 120;
+  const [itemLimit, setItemLimit] = useState(INITIAL_ITEMS);
+  useEffect(() => {
+    setItemLimit(INITIAL_ITEMS);
+  }, [session.sessionId]);
+  const hiddenCount = historyItems ? Math.max(0, historyItems.length - itemLimit) : 0;
+
   const tCount = transcript?.length ?? 0;
   useEffect(() => {
     const el = scrollRef.current;
@@ -277,7 +285,17 @@ export default function Chat({ session, onBack }: { session: ChatSessionKey; onB
         {historyItems === null && (
           <div className="py-10 text-center text-sm text-zinc-600 animate-pulse">加载历史…</div>
         )}
-        {historyItems?.map((item, i) => <ItemView key={`h${i}`} item={item} />)}
+        {hiddenCount > 0 && (
+          <button
+            onClick={() => setItemLimit((l) => l + 300)}
+            className="w-full my-2 py-2 text-center text-xs text-zinc-400 border border-zinc-800 rounded-lg active:bg-zinc-900"
+          >
+            ↑ 显示更早的消息（还有 {hiddenCount} 条）
+          </button>
+        )}
+        {historyItems
+          ?.slice(hiddenCount)
+          .map((item, i) => <ItemView key={`h${hiddenCount + i}`} item={item} />)}
         {myTaskIds.map((tid) => (
           <TaskView key={tid} taskId={tid} />
         ))}

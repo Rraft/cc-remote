@@ -45,7 +45,7 @@ type State = {
 
 type Action =
   | { type: 'ws_state'; state: WsState }
-  | { type: 'event'; e: ServerEvent }
+  | { type: 'event_batch'; events: ServerEvent[] }
   | { type: 'set_config'; config: PublicConfig }
   | { type: 'set_sessions'; sessions: SessionRecord[] }
   | { type: 'clear_error' }
@@ -78,8 +78,12 @@ function reducer(s: State, a: Action): State {
       return { ...s, notice: a.msg };
     case 'clear_notice':
       return { ...s, notice: null };
-    case 'event':
-      return applyEvent(s, a.e);
+    case 'event_batch': {
+      // WS 事件按 ~60ms 合批应用：流式输出时渲染次数与数组复制从每增量一次降为每批一次
+      let next = s;
+      for (const e of a.events) next = applyEvent(next, e);
+      return next;
+    }
   }
 }
 
@@ -287,34 +291,52 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     })();
   }, [afterLogin]);
 
-  // WS 订阅
+  // WS 订阅：事件先入批，60ms 合批 dispatch（大幅降低流式输出时的渲染压力）
   useEffect(() => {
+    let batch: ServerEvent[] = [];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const flush = (): void => {
+      timer = null;
+      if (!batch.length) return;
+      const evs = batch;
+      batch = [];
+      dispatch({ type: 'event_batch', events: evs });
+      let needRefresh = false;
+      for (const e of evs) {
+        // createTask 的等待者在 task_started（立即执行）或 task_queued（排队）时都算送达
+        if (e.type === 'task_started' || e.type === 'task_queued') {
+          const i = waiters.current.findIndex((w) => w.prompt === e.prompt);
+          if (i >= 0) {
+            const [w] = waiters.current.splice(i, 1);
+            clearTimeout(w!.timer);
+            w!.resolve({
+              taskId: e.taskId,
+              convId: e.type === 'task_started' ? e.convId : '',
+            });
+          }
+        }
+        if (e.type === 'task_done') needRefresh = true;
+        if (e.type === 'error') {
+          for (const w of waiters.current.splice(0)) {
+            clearTimeout(w.timer);
+            w.reject(new Error(e.message));
+          }
+        }
+      }
+      if (needRefresh) void refreshSessions();
+    };
+
     const offMsg = wsClient.onMessage((e) => {
-      dispatch({ type: 'event', e });
-      // createTask 的等待者在 task_started（立即执行）或 task_queued（排队）时都算送达
-      if (e.type === 'task_started' || e.type === 'task_queued') {
-        const i = waiters.current.findIndex((w) => w.prompt === e.prompt);
-        if (i >= 0) {
-          const [w] = waiters.current.splice(i, 1);
-          clearTimeout(w!.timer);
-          w!.resolve({
-            taskId: e.taskId,
-            convId: e.type === 'task_started' ? e.convId : '',
-          });
-        }
-      }
-      if (e.type === 'task_done') void refreshSessions();
-      if (e.type === 'error') {
-        for (const w of waiters.current.splice(0)) {
-          clearTimeout(w.timer);
-          w.reject(new Error(e.message));
-        }
-      }
+      batch.push(e);
+      if (!timer) timer = setTimeout(flush, 60);
     });
     const offState = wsClient.onState((s) => dispatch({ type: 'ws_state', state: s }));
     return () => {
       offMsg();
       offState();
+      if (timer) clearTimeout(timer);
+      flush(); // 卸载时不丢尾部事件
     };
   }, [refreshSessions]);
 

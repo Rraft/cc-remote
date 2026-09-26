@@ -1,18 +1,20 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import readline from 'node:readline';
 import { getSessionInfo, listSessions } from '@anthropic-ai/claude-agent-sdk';
 import type { AssistantBlock, ServerEvent } from './protocol.js';
 
 /**
  * CC 原生会话转录读取（~/.claude/projects/<slug>/<sessionId>.jsonl），
- * 归一化为与实时流相同的 ServerEvent 序列 —— 前端用同一套渲染逻辑
- * 展示「历史记录 + 实时任务」，会话身份完全以 CC 的 session_id 为准。
+ * 归一化为与实时流相同的 ServerEvent 序列。
  *
- * 性能设计：
- * - 服务端按会话缓存解析结果（LRU），文件 mtime/size 变化时自动失效重解析
- * - 分页返回（limit/before 游标 = 事件数组下标），前端先取最近一页立即渲染，
- *   再后台逐页补全；服务端启动时对最近会话做 warm-up 预热缓存
+ * 性能设计（转录可达数十 MB，绝不能阻塞事件循环）：
+ * - 流式逐行读取（createReadStream + readline），每解析 YIELD_EVERY 行主动让出事件循环
+ * - 按会话 LRU 缓存解析结果，mtime/size 变化才重新解析
+ * - 同一会话的并发请求共享同一个解析 Promise（in-flight 合并）
+ * - 分页返回（limit/before 游标），启动预热逐个会话低优先级进行
  */
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
@@ -21,17 +23,16 @@ const TOOL_RESULT_MAX = 4000;
 const EVENT_CAP = 20000;
 /** LRU 缓存的会话数上限 */
 const CACHE_MAX = 40;
+/** 每解析多少行让出一次事件循环 */
+const YIELD_EVERY = 400;
 
 export type TranscriptPage = {
   sessionId: string;
   title?: string;
   cwd?: string;
   events: ServerEvent[];
-  /** 全量事件数 */
   total: number;
-  /** 本页首个事件在全量数组中的下标 */
   from: number;
-  /** 前面还有更旧的历史 */
   hasMore: boolean;
 };
 
@@ -45,6 +46,9 @@ type CachedTranscript = {
 };
 
 const cache = new Map<string, CachedTranscript>();
+const inflight = new Map<string, Promise<CachedTranscript>>();
+
+const yieldToLoop = (): Promise<void> => new Promise((r) => setImmediate(r));
 
 function touchCache(sessionId: string, entry: CachedTranscript): void {
   cache.delete(sessionId);
@@ -67,11 +71,17 @@ function findTranscriptFile(sessionId: string): string | null {
   return null;
 }
 
-/** 解析转录文件为归一化事件序列 */
-function parseTranscript(file: string, sessionId: string): ServerEvent[] {
+/** 流式解析转录为归一化事件序列（异步、分块让出事件循环） */
+async function parseTranscript(file: string, sessionId: string): Promise<ServerEvent[]> {
   const events: ServerEvent[] = [];
-  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+  const rl = readline.createInterface({
+    input: fs.createReadStream(file, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+  let lineNo = 0;
+  for await (const line of rl) {
     if (!line.trim()) continue;
+    if (++lineNo % YIELD_EVERY === 0) await yieldToLoop();
     let e: Record<string, unknown>;
     try {
       e = JSON.parse(line) as Record<string, unknown>;
@@ -155,33 +165,42 @@ function parseTranscript(file: string, sessionId: string): ServerEvent[] {
   return events;
 }
 
-/** 取得（或解析并缓存）会话全量事件 */
+/** 取得（或解析并缓存）会话全量事件；并发请求共享同一解析 */
 async function loadCached(sessionId: string): Promise<CachedTranscript> {
   const hit = cache.get(sessionId);
   const file = hit?.file ?? findTranscriptFile(sessionId);
   if (!file) throw new Error(`会话转录不存在: ${sessionId}`);
-  const st = fs.statSync(file);
+  const st = await fsp.stat(file);
 
   if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
     touchCache(sessionId, hit);
     return hit;
   }
 
-  const events = parseTranscript(file, sessionId);
-  let title: string | undefined;
-  let cwd: string | undefined;
-  try {
-    const info = await getSessionInfo(sessionId);
-    if (info) {
-      title = info.customTitle || info.summary || info.firstPrompt || undefined;
-      cwd = info.cwd;
+  const running = inflight.get(sessionId);
+  if (running) return running;
+
+  const p = (async (): Promise<CachedTranscript> => {
+    const events = await parseTranscript(file, sessionId);
+    let title: string | undefined;
+    let cwd: string | undefined;
+    try {
+      const info = await getSessionInfo(sessionId);
+      if (info) {
+        title = info.customTitle || info.summary || info.firstPrompt || undefined;
+        cwd = info.cwd;
+      }
+    } catch {
+      /* info 缺失不影响转录读取 */
     }
-  } catch {
-    /* info 缺失不影响转录读取 */
-  }
-  const entry: CachedTranscript = { file, mtimeMs: st.mtimeMs, size: st.size, events, title, cwd };
-  touchCache(sessionId, entry);
-  return entry;
+    const entry: CachedTranscript = { file, mtimeMs: st.mtimeMs, size: st.size, events, title, cwd };
+    touchCache(sessionId, entry);
+    return entry;
+  })();
+
+  inflight.set(sessionId, p);
+  p.catch(() => {}).finally(() => inflight.delete(sessionId));
+  return p;
 }
 
 /** 分页读取转录：默认返回最近 limit 条；before = 全量数组下标游标 */
@@ -207,8 +226,8 @@ export async function getTranscript(
 }
 
 /**
- * 服务启动预热：解析最近 n 个会话进缓存（后台执行、逐个容错），
- * 让手机端点开历史会话时首屏就是缓存命中。
+ * 启动预热：逐个解析最近 n 个会话进缓存。
+ * 每个会话之间主动让出事件循环，预热期间服务保持完全可用。
  */
 export async function warmTranscripts(n = 20): Promise<number> {
   const startedAt = Date.now();
@@ -222,6 +241,7 @@ export async function warmTranscripts(n = 20): Promise<number> {
       } catch {
         /* 单个会话失败跳过 */
       }
+      await new Promise((r) => setTimeout(r, 30)); // 低优先级：给正常请求让路
     }
   } catch {
     /* listSessions 失败则跳过预热 */
